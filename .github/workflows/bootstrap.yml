@@ -1,0 +1,42 @@
+name: v0.0.7 Kaynak Kurulumu
+on: [push, workflow_dispatch]
+
+permissions:
+  contents: write
+  actions: write
+
+jobs:
+  kur:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: ZIP varsa kaynakları kur ve APK derlemesini başlat
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+
+          test -f yerel_ai_dunyasi_v007.zip || { echo "ZIP bekleniyor."; exit 0; }
+
+          rm -rf /tmp/v007
+          mkdir -p /tmp/v007
+          unzip -q yerel_ai_dunyasi_v007.zip -d /tmp/v007
+
+          test -f /tmp/v007/yerel_ai_dunyasi_v007/project.godot
+          cp -a /tmp/v007/yerel_ai_dunyasi_v007/. .
+          rm -f yerel_ai_dunyasi_v007.zip
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git add -A
+          git commit -m "v0.0.7 kaynaklarını kur"
+          git push origin HEAD:main
+
+          for i in 1 2 3 4 5 6; do
+            gh workflow run android-debug-apk.yml --ref main && exit 0
+            sleep 5
+          done
+
+          echo "Kaynaklar kuruldu; Android workflow elle başlatılabilir."
