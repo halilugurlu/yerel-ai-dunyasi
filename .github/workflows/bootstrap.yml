@@ -1,42 +1,109 @@
-name: v0.0.7 Kaynak Kurulumu
-on: [push, workflow_dispatch]
+name: Yerel AI Dünyası Android APK
+
+on:
+  push:
+  workflow_dispatch:
 
 permissions:
-  contents: write
-  actions: write
+  contents: read
+
+env:
+  GODOT_VERSION: "4.7.2"
+  LLAMA_CPP_REF: "v0.4.1"
+  ANDROID_NDK_VERSION: "29.0.13113456"
+  ANDROID_CMAKE_VERSION: "3.31.6"
+  ANDROID_BUILD_TOOLS: "36.0.0"
 
 jobs:
-  kur:
-    runs-on: ubuntu-latest
+  android-apk:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+
     steps:
-      - uses: actions/checkout@v4
+      - name: Depoyu al
+        uses: actions/checkout@v4
 
-      - name: ZIP varsa kaynakları kur ve APK derlemesini başlat
-        env:
-          GH_TOKEN: ${{ github.token }}
+      - name: Proje ZIP dosyasını aç
         run: |
-          set -euo pipefail
+          set -euxo pipefail
+          test -f yerel_ai_dunyasi_v007.zip
+          mkdir -p work
+          unzip -q yerel_ai_dunyasi_v007.zip -d work
+          test -f work/yerel_ai_dunyasi_v007/project.godot
 
-          test -f yerel_ai_dunyasi_v007.zip || { echo "ZIP bekleniyor."; exit 0; }
+      - name: Java 17 kur
+        uses: actions/setup-java@v5
+        with:
+          distribution: zulu
+          java-version: "17"
 
-          rm -rf /tmp/v007
-          mkdir -p /tmp/v007
-          unzip -q yerel_ai_dunyasi_v007.zip -d /tmp/v007
+      - name: Android SDK kur
+        uses: android-actions/setup-android@v3
 
-          test -f /tmp/v007/yerel_ai_dunyasi_v007/project.godot
-          cp -a /tmp/v007/yerel_ai_dunyasi_v007/. .
-          rm -f yerel_ai_dunyasi_v007.zip
+      - name: Android bileşenlerini kur
+        run: |
+          set -euxo pipefail
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager \
+            "platform-tools" \
+            "platforms;android-36" \
+            "build-tools;${ANDROID_BUILD_TOOLS}" \
+            "ndk;${ANDROID_NDK_VERSION}" \
+            "cmake;${ANDROID_CMAKE_VERSION}"
 
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+      - name: Godot ve Android export şablonlarını kur
+        run: |
+          set -euxo pipefail
 
-          git add -A
-          git commit -m "v0.0.7 kaynaklarını kur"
-          git push origin HEAD:main
+          mkdir -p "$HOME/bin"
+          mkdir -p "$HOME/.local/share/godot/export_templates/4.7.2.stable"
 
-          for i in 1 2 3 4 5 6; do
-            gh workflow run android-debug-apk.yml --ref main && exit 0
-            sleep 5
-          done
+          curl -fL --retry 3 \
+            "https://github.com/godotengine/godot-builds/releases/download/${GODOT_VERSION}-stable/Godot_v${GODOT_VERSION}-stable_linux.x86_64.zip" \
+            -o /tmp/godot.zip
 
-          echo "Kaynaklar kuruldu; Android workflow elle başlatılabilir."
+          unzip -q /tmp/godot.zip -d "$HOME/bin"
+
+          GODOT_BIN="$(find "$HOME/bin" -type f -name 'Godot_v*-stable_linux.x86_64' | head -1)"
+          chmod +x "$GODOT_BIN"
+          echo "GODOT_BIN=$GODOT_BIN" >> "$GITHUB_ENV"
+
+          curl -fL --retry 3 \
+            "https://github.com/godotengine/godot-builds/releases/download/${GODOT_VERSION}-stable/Godot_v${GODOT_VERSION}-stable_export_templates.tpz" \
+            -o /tmp/templates.tpz
+
+          mkdir -p /tmp/godot_templates
+          unzip -q /tmp/templates.tpz -d /tmp/godot_templates
+
+          cp -a /tmp/godot_templates/templates/. \
+            "$HOME/.local/share/godot/export_templates/4.7.2.stable/"
+
+      - name: Projeyi doğrula ve APK üret
+        working-directory: work/yerel_ai_dunyasi_v007
+        env:
+          LLAMA_CPP_REF: ${{ env.LLAMA_CPP_REF }}
+        run: |
+          set -euxo pipefail
+          export ANDROID_HOME="${ANDROID_SDK_ROOT}"
+
+          python3 tools/validate_project.py
+          python3 tools/check_engineering_math.py
+          python3 tools/verify_android_contract.py
+
+          bash tools/build_android_debug.sh
+
+          test -s build/yerel-ai-dunyasi-v007-debug.apk
+
+          sha256sum \
+            build/yerel-ai-dunyasi-v007-debug.apk \
+            > build/yerel-ai-dunyasi-v007-debug.apk.sha256
+
+      - name: APK dosyasını yükle
+        uses: actions/upload-artifact@v4
+        with:
+          name: yerel-ai-dunyasi-v007-android-debug
+          path: |
+            work/yerel_ai_dunyasi_v007/build/yerel-ai-dunyasi-v007-debug.apk
+            work/yerel_ai_dunyasi_v007/build/yerel-ai-dunyasi-v007-debug.apk.sha256
+          if-no-files-found: error
+          retention-days: 14
