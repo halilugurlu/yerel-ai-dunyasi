@@ -18,7 +18,7 @@ env:
 jobs:
   android-apk:
     runs-on: ubuntu-24.04
-    timeout-minutes: 180
+    timeout-minutes: 90
 
     steps:
       - name: Depoyu al
@@ -44,6 +44,7 @@ jobs:
         shell: bash
         run: |
           set -euxo pipefail
+
           if [ -n "${ANDROID_SDK_ROOT:-}" ]; then
             SDK_ROOT="$ANDROID_SDK_ROOT"
           elif [ -n "${ANDROID_HOME:-}" ]; then
@@ -51,12 +52,15 @@ jobs:
           else
             SDK_ROOT="/usr/local/lib/android/sdk"
           fi
+
           echo "ANDROID_SDK_ROOT=$SDK_ROOT" >> "$GITHUB_ENV"
           echo "ANDROID_HOME=$SDK_ROOT" >> "$GITHUB_ENV"
+
           SDKMANAGER="$SDK_ROOT/cmdline-tools/latest/bin/sdkmanager"
           if [ ! -x "$SDKMANAGER" ]; then
             SDKMANAGER="$(find "$SDK_ROOT/cmdline-tools" -type f -name sdkmanager | sort -V | tail -1)"
           fi
+
           test -x "$SDKMANAGER"
           echo "SDKMANAGER=$SDKMANAGER" >> "$GITHUB_ENV"
           "$SDKMANAGER" --version
@@ -71,12 +75,14 @@ jobs:
         shell: bash
         run: |
           set -euxo pipefail
+
           "$SDKMANAGER" \
             "platform-tools" \
             "platforms;android-${ANDROID_PLATFORM}" \
             "build-tools;${ANDROID_BUILD_TOOLS}" \
             "ndk;${ANDROID_NDK_VERSION}" \
             "cmake;${ANDROID_CMAKE_VERSION}"
+
           echo "ANDROID_NDK_HOME=$ANDROID_SDK_ROOT/ndk/$ANDROID_NDK_VERSION" >> "$GITHUB_ENV"
           echo "ANDROID_NDK_ROOT=$ANDROID_SDK_ROOT/ndk/$ANDROID_NDK_VERSION" >> "$GITHUB_ENV"
 
@@ -84,14 +90,19 @@ jobs:
         shell: bash
         run: |
           set -euxo pipefail
+
           mkdir -p "$HOME/bin"
+
           curl -fL --retry 5 --retry-delay 3 \
             "https://github.com/godotengine/godot-builds/releases/download/${GODOT_VERSION}-stable/Godot_v${GODOT_VERSION}-stable_linux.x86_64.zip" \
             -o /tmp/godot.zip
+
           unzip -q /tmp/godot.zip -d "$HOME/bin"
+
           GODOT_BIN="$(find "$HOME/bin" -type f -name 'Godot_v*-stable_linux.x86_64' | head -1)"
           test -n "$GODOT_BIN"
           chmod +x "$GODOT_BIN"
+
           echo "GODOT_BIN=$GODOT_BIN" >> "$GITHUB_ENV"
           "$GODOT_BIN" --version
 
@@ -99,14 +110,19 @@ jobs:
         shell: bash
         run: |
           set -euxo pipefail
+
           TEMPLATE_DIR="$HOME/.local/share/godot/export_templates/4.7.2.stable"
+
           rm -rf "$TEMPLATE_DIR" /tmp/godot_templates
           mkdir -p "$TEMPLATE_DIR" /tmp/godot_templates
+
           curl -fL --retry 5 --retry-delay 3 \
             "https://github.com/godotengine/godot-builds/releases/download/${GODOT_VERSION}-stable/Godot_v${GODOT_VERSION}-stable_export_templates.tpz" \
             -o /tmp/templates.tpz
+
           unzip -q /tmp/templates.tpz -d /tmp/godot_templates
           cp -a /tmp/godot_templates/templates/. "$TEMPLATE_DIR/"
+
           test -f "$TEMPLATE_DIR/android_debug.apk"
 
       - name: Proje dosyalarını doğrula
@@ -114,6 +130,7 @@ jobs:
         shell: bash
         run: |
           set -euxo pipefail
+
           python3 tools/validate_project.py
           python3 tools/check_engineering_math.py
           python3 tools/verify_android_contract.py
@@ -123,9 +140,11 @@ jobs:
         shell: bash
         run: |
           set -euxo pipefail
+
           PLUGIN_ROOT="$PWD/android_plugin"
           THIRD_PARTY="$PLUGIN_ROOT/.third_party"
           LLAMA_DIR="$THIRD_PARTY/llama.cpp"
+
           rm -rf "$THIRD_PARTY"
           mkdir -p "$THIRD_PARTY" "$PLUGIN_ROOT/plugin/libs"
 
@@ -138,26 +157,31 @@ jobs:
 
           test -f "$LLAMA_DIR/examples/llama.android/lib/build.gradle.kts"
           chmod +x "$LLAMA_DIR/examples/llama.android/gradlew"
+
           git -C "$LLAMA_DIR" rev-parse HEAD > "$PLUGIN_ROOT/LLAMA_CPP_REVISION.txt"
-          echo "llama.cpp revision: $(cat "$PLUGIN_ROOT/LLAMA_CPP_REVISION.txt")"
 
       - name: llama.cpp Android yapısını yalnız ARM64 ile sınırla
         working-directory: work/yerel_ai_dunyasi_v007
         shell: bash
         run: |
           set -euxo pipefail
+
           FILE="android_plugin/.third_party/llama.cpp/examples/llama.android/lib/build.gradle.kts"
+
           python3 - "$FILE" <<'PY'
           from pathlib import Path
           import sys
+
           p = Path(sys.argv[1])
           s = p.read_text(encoding="utf-8")
+
           old = 'abiFilters += listOf("arm64-v8a", "x86_64")'
           new = 'abiFilters += listOf("arm64-v8a")'
+
           if old not in s:
               raise SystemExit("Beklenen ABI satırı bulunamadı.")
+
           p.write_text(s.replace(old, new), encoding="utf-8")
-          print("llama.cpp yalnız arm64-v8a için derlenecek.")
           PY
 
       - name: llama.cpp Android AAR derle
@@ -165,31 +189,38 @@ jobs:
         shell: bash
         run: |
           set -euxo pipefail
+
           LLAMA_ROOT="$PWD/android_plugin/.third_party/llama.cpp"
+
           cd "$LLAMA_ROOT/examples/llama.android"
-          timeout 110m ./gradlew :lib:assembleRelease \
+
+          timeout 30m ./gradlew :lib:assembleRelease \
             --no-daemon \
             --stacktrace \
             --max-workers="$(nproc)"
+
           SOURCE_AAR="$LLAMA_ROOT/examples/llama.android/lib/build/outputs/aar/lib-release.aar"
           test -s "$SOURCE_AAR"
+
           cp "$SOURCE_AAR" \
             "$GITHUB_WORKSPACE/work/yerel_ai_dunyasi_v007/android_plugin/plugin/libs/llama-android-release.aar"
-          ls -lh "$SOURCE_AAR"
 
       - name: Godot Yerel AI eklentisini yalnız debug için derle
         working-directory: work/yerel_ai_dunyasi_v007
         shell: bash
         run: |
           set -euxo pipefail
+
           PLUGIN_ROOT="$PWD/android_plugin"
           LLAMA_ROOT="$PLUGIN_ROOT/.third_party/llama.cpp"
-          timeout 35m "$LLAMA_ROOT/examples/llama.android/gradlew" \
+
+          timeout 15m "$LLAMA_ROOT/examples/llama.android/gradlew" \
             -p "$PLUGIN_ROOT" \
             :plugin:installDebugToGodot \
             --no-daemon \
             --stacktrace \
             --max-workers="$(nproc)"
+
           test -s addons/YerelAIBackend/bin/debug/YerelAIBackend-debug.aar
           test -s addons/YerelAIBackend/bin/debug/llama-android-release.aar
 
@@ -198,27 +229,29 @@ jobs:
         shell: bash
         run: |
           set -euxo pipefail
+
           export ANDROID_HOME="$ANDROID_SDK_ROOT"
           python3 tools/android_preflight.py --strict
 
-      - name: Godot Android build template kur
+      - name: Android build template kur ve APK üret
         working-directory: work/yerel_ai_dunyasi_v007
         shell: bash
         run: |
           set -euxo pipefail
-          "$GODOT_BIN" --headless --path "$PWD" --install-android-build-template
 
-      - name: APK üret
-        working-directory: work/yerel_ai_dunyasi_v007
-        shell: bash
-        run: |
-          set -euxo pipefail
           export ANDROID_HOME="$ANDROID_SDK_ROOT"
+          export JAVA_HOME="$JAVA_HOME"
+
           mkdir -p build
-          "$GODOT_BIN" --headless \
+
+          timeout 25m "$GODOT_BIN" \
+            --headless \
+            --verbose \
             --path "$PWD" \
+            --install-android-build-template \
             --export-debug "Android Debug" \
             "$PWD/build/yerel-ai-dunyasi-v007-debug.apk"
+
           test -s build/yerel-ai-dunyasi-v007-debug.apk
           ls -lh build/yerel-ai-dunyasi-v007-debug.apk
 
@@ -227,8 +260,10 @@ jobs:
         shell: bash
         run: |
           set -euxo pipefail
+
           sha256sum build/yerel-ai-dunyasi-v007-debug.apk \
             > build/yerel-ai-dunyasi-v007-debug.apk.sha256
+
           cat build/yerel-ai-dunyasi-v007-debug.apk.sha256
 
       - name: APK dosyasını artifact olarak yükle
